@@ -1,7 +1,12 @@
 import xarray as xr
 import cftime
 import numpy as np
-    
+import pandas as pd
+import cartopy.io.shapereader as shpreader
+
+from cmip6_preprocessing.preprocessing import rename_cmip6
+from cmip6_preprocessing.preprocessing import promote_empty_dims, broadcast_lonlat, replace_x_y_nominal_lat_lon
+
 def weighted_mean_of_masked_data(data_in,data_mask,data_cond):
     #data_in = input xarray data to have weighted mean
     #data_mask = nan mask eg. land values
@@ -29,15 +34,16 @@ def weighted_mean_of_data(data_in,data_cond):
     global_attrs = data_in.attrs
     R = 6.37e6 #radius of earth in m
     grid_dy,grid_dx = (data_in.lat[0]-data_in.lat[1]).data,(data_in.lon[0]-data_in.lon[1]).data
+   # grid_dy,grid_dx = (data_in.lat[0,0]-data_in.lat[0,1]).data,(data_in.lon[0,0]-data_in.lon[1,0]).data
+
     dϕ = np.deg2rad(grid_dy)
     dλ = np.deg2rad(grid_dx)
     dA = R**2 * dϕ * dλ * np.cos(np.deg2rad(data_in.lat)) 
     pixel_area = dA.where(data_cond)  #pixel_area.plot()
-    #pixel_area = pixel_area.where(np.isfinite(data_mask))
+  
     sum_data=(data_in*pixel_area).sum(dim=('lon', 'lat'),keep_attrs=True)
     total_ocean_area = pixel_area.sum(dim=('lon', 'lat'))
-    #print(sum_data)
-    #print(total_ocean_area)
+
     data_weighted_mean = sum_data/total_ocean_area
     data_weighted_mean.attrs = global_attrs  #save global attributes
     for a in data_in:                      #set attributes for each variable in dataset
@@ -45,31 +51,22 @@ def weighted_mean_of_data(data_in,data_cond):
         data_weighted_mean[a].attrs=gatt
 
     return data_weighted_mean
-
-
-def get_filename(var):
-    if (str(var).lower()=='sst') or (var==1):
-        file='./data/sst.mnmean.nc'
-    if (str(var).lower()=='wind') or (var==2):
-        file='./data/wind.mnmean.nc'
-    if (str(var).lower()=='current') or (var==3):
-        file='./data/cur.mnmean.nc'
-    if (str(var).lower()=='chl') or (var==4):
-        file='./data/chl.mnmean.nc'
-    return file
        
 def get_pices_mask():
     filename = './data/PICES/PICES_all_mask360.nc'
     ds = xr.open_dataset(filename)
     ds.close()
     return ds
-
-def get_lme_mask():
-    filename = './data/LME/LME_all_mask.nc'
-    ds = xr.open_dataset(filename)
-    ds.close()
-    return ds
   
+def preprocessing_wrapper(ds):
+    print("Starting preprocessing")
+    ds = ds.copy()
+    ds = rename_cmip6(ds)
+    ds = promote_empty_dims(ds)
+    ds = broadcast_lonlat(ds)
+    ds = replace_x_y_nominal_lat_lon(ds)
+    return ds
+
 def get_and_organize_cmip6_data(conf):
     # Dictionary to hold the queried variables
     first = True
@@ -82,10 +79,9 @@ def get_and_organize_cmip6_data(conf):
                         # Create unique key to hold dataset in dictionary
                         key="{}_{}_{}_{}_{}".format(variable_id,experiment_id,grid_label,source_id,member_id)
                         # Historical query string
-                        query_string = "source_id=='{}'and table_id=='{}' and member_id=='{}' and grid_label=='{}' and experiment_id=='historical' and variable_id=='{}'".format(source_id, 
+                        query_string = "source_id=='{}'and table_id=='{}' and grid_label=='{}' and experiment_id=='historical' and variable_id=='{}'".format(source_id, 
                         table_id, 
-                        member_id, 
-                        grid_label, 
+                        grid_label,
                         variable_id)
                         
                         print(
@@ -123,7 +119,7 @@ def get_and_organize_cmip6_data(conf):
                             first = False
 
                         # Concatentate the historical and projections datasets
-                        ds_hist=ds_hist.sel(time=slice(ds_hist["time"][0],"2000-12-15"))
+                    #    ds_hist=ds_hist.sel(time=slice(ds_hist["time"][0],"2000-12-15"))
                         #  print("Time in projection {} - {}".format(ds_proj["time"][0],ds_proj["time"][-1]))
                         ds = xr.concat([ds_hist, ds_proj], dim="time")
 
@@ -134,23 +130,30 @@ def get_and_organize_cmip6_data(conf):
                         # Extract the time period of interest
                         ds=ds.sel(time=slice(conf.start_date,conf.end_date))
                         print("{} => Dates extracted range from {} to {}\n".format(source_id,ds["time"].values[0], ds["time"].values[-1]))
+                        # pass the preprocessing directly
+                       # dset_processed = preprocessing_wrapper(ds)
 
                         # Save the dataset for variable_id in the dictionary
-                        conf.dset_dict[key] = ds
+                        conf.dset_dict[key] = ds #dset_processed
+    return conf
+
+def get_LME_records():
+    lme_file='./data/LME_64_180/lmes_64_180.shp'
+    return shpreader.Reader(lme_file)
 
 def perform_cmip6_query(conf,query_string):
     df_sub = conf.df.query(query_string)
-    print(df_sub.zstore.values)
     if (df_sub.zstore.values.size==0):
         return df_sub
     
     mapper = conf.fs.get_mapper(df_sub.zstore.values[-1])
     ds = xr.open_zarr(mapper, consolidated=True)
-    time_object = ds["time"].values[0]
 
+    time_object = ds["time"].values[0]
+    
     # Convert if necesssary
     if time_object.year == 1:
-
+        
         times = ds["time"].values
         times_plus_2000 = []
         for t in times:
