@@ -2,10 +2,9 @@ import xarray as xr
 import cftime
 import numpy as np
 import pandas as pd
-import cartopy.io.shapereader as shpreader
+import geopandas as gpd
 
-from cmip6_preprocessing.preprocessing import rename_cmip6
-from cmip6_preprocessing.preprocessing import promote_empty_dims, broadcast_lonlat, replace_x_y_nominal_lat_lon
+from cmip6_preprocessing.preprocessing import combined_preprocessing
 
 def weighted_mean_of_masked_data(data_in,data_mask,data_cond):
     #data_in = input xarray data to have weighted mean
@@ -51,24 +50,10 @@ def weighted_mean_of_data(data_in,data_cond):
         data_weighted_mean[a].attrs=gatt
 
     return data_weighted_mean
-       
-def get_pices_mask():
-    filename = './data/PICES/PICES_all_mask360.nc'
-    ds = xr.open_dataset(filename)
-    ds.close()
-    return ds
-  
-def preprocessing_wrapper(ds):
-    print("Starting preprocessing")
-    ds = ds.copy()
-    ds = rename_cmip6(ds)
-    ds = promote_empty_dims(ds)
-    ds = broadcast_lonlat(ds)
-    ds = replace_x_y_nominal_lat_lon(ds)
-    return ds
 
 def get_and_organize_cmip6_data(conf):
     # Dictionary to hold the queried variables
+  
     first = True
     for experiment_id in conf.experiment_ids:
         for grid_label in conf.grid_labels:
@@ -83,7 +68,7 @@ def get_and_organize_cmip6_data(conf):
                         table_id, 
                         grid_label,
                         variable_id)
-                        
+                      
                         print(
                             "Running historical query on data: \n ==> {}\n".format(
                                 query_string
@@ -100,47 +85,44 @@ def get_and_organize_cmip6_data(conf):
                                 experiment_id,
                                 variable_id,
                             )
-                          #  print(
-                          #      "Running projections query on data: \n ==> {}\n".format(
-                          #          query_string
-                          #      )
-                          #  )
+                        print(
+                            "Running projections query on data: \n ==> {}\n".format(
+                                query_string
+                            )
+                        )
                         ds_proj = perform_cmip6_query(conf,query_string)
-
-                        if first:
-                            df_area = conf.df.query(
-                                    "variable_id == 'areacella' and source_id =='{}'".format(
-                                        source_id
-                                    )
-                                )
-                            ds_area = xr.open_zarr(
-                                    conf.fs.get_mapper(df_area.zstore.values[0]), consolidated=True
-                                )
-                            first = False
-
+                        
                         # Concatentate the historical and projections datasets
-                    #    ds_hist=ds_hist.sel(time=slice(ds_hist["time"][0],"2000-12-15"))
-                        #  print("Time in projection {} - {}".format(ds_proj["time"][0],ds_proj["time"][-1]))
                         ds = xr.concat([ds_hist, ds_proj], dim="time")
-
                         # Remove the duplicate overlapping times (e.g. 2001-2014)
-                        #  _, index = np.unique(ds["time"], return_index=True)
-                        #  ds = ds.isel(time=index)
-
+                        _, index = np.unique(ds["time"], return_index=True)
+                        ds = ds.isel(time=index)
+                        
                         # Extract the time period of interest
                         ds=ds.sel(time=slice(conf.start_date,conf.end_date))
                         print("{} => Dates extracted range from {} to {}\n".format(source_id,ds["time"].values[0], ds["time"].values[-1]))
                         # pass the preprocessing directly
-                       # dset_processed = preprocessing_wrapper(ds)
-
+                        dset_processed = combined_preprocessing(ds)
+                        if (variable_id in ["chl"]):
+                            if (source_id in ["CESM2","CESM2-FV2","CESM2-WACCM-FV2","CESM2-WACCM"]):
+                                dset_processed = dset_processed.isel(lev_partial=conf.selected_depth)    
+                            else:
+                                dset_processed = dset_processed.isel(lev=conf.selected_depth)    
+                       
                         # Save the dataset for variable_id in the dictionary
-                        conf.dset_dict[key] = ds #dset_processed
+                        conf.dset_dict[key] = dset_processed
     return conf
 
-def get_LME_records():
-    lme_file='./data/LME_64_180/lmes_64_180.shp'
-    return shpreader.Reader(lme_file)
 
+def get_LME_records():
+    lme_file='./data/LME/LME66.shp'
+    return gpd.read_file(lme_file)
+
+def get_LME_records_plot():
+    lme_file='./data/LME66_180/LME66_180.shp'
+    return gpd.read_file(lme_file)
+
+    
 def perform_cmip6_query(conf,query_string):
     df_sub = conf.df.query(query_string)
     if (df_sub.zstore.values.size==0):
