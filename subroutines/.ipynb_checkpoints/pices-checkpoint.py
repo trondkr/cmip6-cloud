@@ -97,7 +97,7 @@ def get_and_organize_cmip6_data(conf):
                         # Remove the duplicate overlapping times (e.g. 2001-2014)
                         _, index = np.unique(ds["time"], return_index=True)
                         ds = ds.isel(time=index)
-                        
+               
                         # Extract the time period of interest
                         ds=ds.sel(time=slice(conf.start_date,conf.end_date))
                         print("{} => Dates extracted range from {} to {}\n".format(source_id,ds["time"].values[0], ds["time"].values[-1]))
