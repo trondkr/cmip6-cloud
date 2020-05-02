@@ -130,13 +130,13 @@ def perform_cmip6_query(conf,query_string):
     
     mapper = conf.fs.get_mapper(df_sub.zstore.values[-1])
     ds = xr.open_zarr(mapper, consolidated=True)
-
-    time_object = ds["time"].values[0]
-    
+  
+    time_object = pd.DatetimeIndex([ds["time"].values[0]])
+    print(time_object,time_object.year)
     # Convert if necesssary
     if time_object.year == 1:
         
-        times = ds["time"].values
+        times = pd.DatetimeIndex([ds["time"].values])
         times_plus_2000 = []
         for t in times:
             times_plus_2000.append(
