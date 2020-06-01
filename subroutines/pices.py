@@ -95,8 +95,8 @@ def get_and_organize_cmip6_data(conf):
                         # Concatentate the historical and projections datasets
                         ds = xr.concat([ds_hist, ds_proj], dim="time")
                         # Remove the duplicate overlapping times (e.g. 2001-2014)
-                        _, index = np.unique(ds["time"], return_index=True)
-                        ds = ds.isel(time=index)
+                   #     _, index = np.unique(ds["time"], return_index=True)
+                   #     ds = ds.isel(time=index)
                
                         # Extract the time period of interest
                         ds=ds.sel(time=slice(conf.start_date,conf.end_date))
@@ -130,20 +130,22 @@ def perform_cmip6_query(conf,query_string):
     
     mapper = conf.fs.get_mapper(df_sub.zstore.values[-1])
     ds = xr.open_zarr(mapper, consolidated=True)
-  
-    time_object = pd.DatetimeIndex([ds["time"].values[0]])
-    print(time_object,time_object.year)
-    # Convert if necesssary
-    if time_object.year == 1:
+    print("Time encoding: {} - {}".format(ds.indexes['time'],ds.indexes['time'].dtype))
+    if not ds.indexes["time"].dtype in ["datetime64[ns]","object"]:
         
-        times = pd.DatetimeIndex([ds["time"].values])
-        times_plus_2000 = []
-        for t in times:
-            times_plus_2000.append(
-                cftime.DatetimeNoLeap(t.year + 2000, t.month, t.day, t.hour)
-            )
-        ds["time"].values = times_plus_2000
-        ds = xr.decode_cf(ds)                    
+        time_object = ds.indexes['time'].to_datetimeindex() #pd.DatetimeIndex([ds["time"].values[0]])
+        print(time_object,time_object.year)
+        # Convert if necesssary
+        if time_object[0].year == 1:
+
+            times = ds.indexes['time'].to_datetimeindex()  # pd.DatetimeIndex([ds["time"].values])
+            times_plus_2000 = []
+            for t in times:
+                times_plus_2000.append(
+                    cftime.DatetimeNoLeap(t.year + 2000, t.month, t.day, t.hour)
+                )
+            ds["time"].values = times_plus_2000
+            ds = xr.decode_cf(ds)                    
     return ds
 
 def get_pices_cmip6_data(var, ilme, initial_date,final_date):
